@@ -22,7 +22,20 @@ function getTextFromNode(node) {
     if (childNode.nodeType === Node.TEXT_NODE) {
       result += childNode.textContent;
     } else if (childNode.nodeType === Node.ELEMENT_NODE) {
-      result += getTextFromNode(childNode);
+      // Ignore text from specified class
+      if (!childNode.classList.contains('flex') ||
+          !childNode.classList.contains('items-center') ||
+          !childNode.classList.contains('relative') ||
+          !childNode.classList.contains('text-token-text-secondary') ||
+          !childNode.classList.contains('bg-token-main-surface-secondary') ||
+          !childNode.classList.contains('px-4') ||
+          !childNode.classList.contains('py-2') ||
+          !childNode.classList.contains('text-xs') ||
+          !childNode.classList.contains('font-sans') ||
+          !childNode.classList.contains('justify-between') ||
+          !childNode.classList.contains('rounded-t-md')) {
+        result += getTextFromNode(childNode);
+      }
     }
   }
 
@@ -41,6 +54,7 @@ class App {
     this.stop = false;
     this.dom = null;
     this.lastText = null; // Track the last message text
+    this.checkTimer = null; // Timer for checking unchanged message
   }
 
   async start({ text, model, newChat }) {
@@ -64,7 +78,7 @@ class App {
         textarea.dispatchEvent(event);
 
         // Adding a small delay before pressing the send button
-        await sleep(500);
+        await sleep(1000);
 
         // Click the send button to send the edited message
         const sendButton = document.querySelector('button.btn.relative.btn-primary');
@@ -103,7 +117,7 @@ class App {
   async observeMutations() {
     await sleep(2000); // Initial delay before first checking button state
     this.observer = new MutationObserver(async (mutations) => {
-      await sleep(500); // Adding delay to ensure message content is updated
+      await sleep(6000); // Adding delay to ensure message content is updated
       const list = [...document.querySelectorAll('div.agent-turn')];
       const last = list[list.length - 1];
       if (!last) {
@@ -122,6 +136,11 @@ class App {
 
       if (stopButton || !sendButton) {
         console.log('Message not fully loaded yet');
+        return;
+      }
+
+      if (lastText.trim() === '') {
+        console.log('Error: Last message text is empty');
         return;
       }
 
@@ -148,11 +167,45 @@ class App {
           })
         );
         this.observer.disconnect();
+        clearTimeout(this.checkTimer); // Clear the timer if it exists
       }
     });
 
     const observerConfig = { childList: true, subtree: true };
     this.observer.observe(document.body, observerConfig);
+
+    // Set a timer to check for unchanged message
+    this.checkTimer = setTimeout(async () => {
+      if (this.lastText) {
+        console.log('Checking unchanged message timer');
+        const list = [...document.querySelectorAll('div.agent-turn')];
+        const last = list[list.length - 1];
+        const lastText = getTextFromNode(last.querySelector('div[data-message-author-role="assistant"]'));
+        if (lastText === this.lastText) {
+          console.log('Last message unchanged for 10 seconds, sending message');
+          this.socket.send(
+            JSON.stringify({
+              type: 'answer',
+              text: lastText,
+            })
+          );
+          await sleep(1000);
+          if (!document.querySelector('button[aria-label="Stop generating"]')) {
+            if (this.stop) return;
+            this.stop = true;
+            console.log('send', {
+              type: 'stop',
+            });
+            this.socket.send(
+              JSON.stringify({
+                type: 'stop',
+              })
+            );
+            this.observer.disconnect();
+          }
+        }
+      }
+    }, 30000);
   }
 
   sendHeartbeat() {
